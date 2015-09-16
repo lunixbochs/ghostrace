@@ -3,20 +3,26 @@ package ghostrace
 import (
 	"fmt"
 	"syscall"
+
+	"./process"
 )
 
 func TracePid(pid int) (chan *Syscall, error) {
 	ret := make(chan *Syscall)
+	process, err := process.FindPid(pid)
+	if err != nil {
+		return nil, err
+	}
 	if err := syscall.PtraceAttach(pid); err != nil {
 		return nil, err
 	}
-	var regs syscall.PtraceRegs
+	var savedRegs, regs syscall.PtraceRegs
 	var status syscall.WaitStatus
-	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
-		return nil, err
-	}
 	// TODO: set options for following children?
 	if err := syscall.PtraceSetOptions(pid, syscall.PTRACE_O_TRACESYSGOOD); err != nil {
+		return nil, err
+	}
+	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
 		return nil, err
 	}
 	go func() {
@@ -24,9 +30,13 @@ func TracePid(pid int) (chan *Syscall, error) {
 		for {
 			// wait for syscall entry
 			if err := syscall.PtraceSyscall(pid, 0); err != nil {
+				fmt.Println(err)
 				break
 			}
 			if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
+				break
+			}
+			if status.Exited() {
 				break
 			}
 			signal := status.StopSignal()
@@ -37,10 +47,16 @@ func TracePid(pid int) (chan *Syscall, error) {
 				}
 				if newSyscall {
 					newSyscall = false
-					fmt.Printf("syscall(%d)", regs.Orig_rax)
+					savedRegs = regs
 				} else {
 					newSyscall = true
-					fmt.Printf(" = %d\n", regs.Rax)
+					ret <- &Syscall{
+						Process: process,
+						Num:     int(savedRegs.Orig_rax),
+						Name:    "",
+						Args:    []uint64{regs.Rdi, regs.Rsi, regs.Rdx, regs.R10, regs.R8, regs.R9},
+						Ret:     regs.Rax,
+					}
 				}
 				// TODO: do something with these?
 			case syscall.PTRACE_EVENT_VFORK:

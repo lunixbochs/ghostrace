@@ -9,4 +9,5 @@ type Syscall struct {
 	Num     int
 	Name    string
 	Args    []uint64
+	Ret     uint64
 }

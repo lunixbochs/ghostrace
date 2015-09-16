@@ -1,6 +1,7 @@
 package process
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -54,6 +55,9 @@ func FindPid(pid int) (Process, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("pid %d not found", pid)
 	}
 	return list[0], nil
 }

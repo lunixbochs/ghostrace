@@ -26,7 +26,7 @@ func (pl ProcessList) Print(tree bool) {
 func (pl ProcessList) Filter(cb func(Process) bool) ProcessList {
 	out := make(ProcessList, 0, len(pl))
 	for _, v := range pl {
-		if cb(v) {
+		if v != nil && cb(v) {
 			out = append(out, v)
 		}
 	}
