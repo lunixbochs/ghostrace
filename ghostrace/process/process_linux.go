@@ -22,7 +22,6 @@ func (p *LinuxProcess) Exe() string {
 }
 
 func (p *LinuxProcess) Cmdline() []string {
-
 	cmdline, _ := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cmdline", p.pid))
 	return strings.Split(string(cmdline), "\x00")
 }
