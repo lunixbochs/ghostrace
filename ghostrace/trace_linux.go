@@ -15,6 +15,10 @@ func TraceSpawn(cmd string, args ...string) (chan *Syscall, error) {
 	if err != nil {
 		return nil, err
 	}
+	var status syscall.WaitStatus
+	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
+		return nil, err
+	}
 	proc, err := process.FindPid(pid)
 	if err != nil {
 		return nil, err
@@ -30,6 +34,10 @@ func TracePid(pid int) (chan *Syscall, error) {
 	if err := syscall.PtraceAttach(pid); err != nil {
 		return nil, err
 	}
+	var status syscall.WaitStatus
+	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
+		return nil, err
+	}
 	return traceProcess(proc)
 }
 
@@ -40,9 +48,6 @@ func traceProcess(proc process.Process) (chan *Syscall, error) {
 	var status syscall.WaitStatus
 	// TODO: set options for following children?
 	if err := syscall.PtraceSetOptions(pid, syscall.PTRACE_O_TRACESYSGOOD); err != nil {
-		return nil, err
-	}
-	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
 		return nil, err
 	}
 	go func() {
