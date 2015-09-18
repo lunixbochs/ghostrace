@@ -1,29 +1,41 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
-	"strconv"
 
 	"./ghostrace"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: ./ghostrace <pid>")
-		os.Exit(1)
+	fs := flag.NewFlagSet("ghostrace", flag.ExitOnError)
+	// follow := fs.Bool("f", false, "follow subprocesses")
+	pid := fs.Int("p", -1, "attach to pid")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] -p <pid> | <exe> [args...]\n", os.Args[0])
+		fs.PrintDefaults()
 	}
-	pid, err := strconv.Atoi(os.Args[1])
-	if err != nil {
-		fmt.Printf("Error converting pid: %s\n", err)
-		os.Exit(1)
+	fs.Parse(os.Args[1:])
+	args := fs.Args()
+
+	var trace chan *ghostrace.Syscall
+	var err error
+	if pid != nil && *pid >= 0 {
+		trace, err = ghostrace.TracePid(*pid)
+	} else {
+		if len(args) > 0 {
+			trace, err = ghostrace.TraceSpawn(args[0], args...)
+		} else {
+			fs.Usage()
+			os.Exit(1)
+		}
 	}
-	trace, err := ghostrace.TracePid(pid)
 	if err != nil {
-		fmt.Printf("Error starting trace: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error starting trace: %s\n", err)
 		os.Exit(1)
 	}
 	for sc := range trace {
-		fmt.Printf("%+v\n", sc)
+		fmt.Fprintf(os.Stderr, "%+v\n", sc)
 	}
 }
