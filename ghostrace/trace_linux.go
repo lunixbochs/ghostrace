@@ -2,6 +2,7 @@ package ghostrace
 
 import (
 	"fmt"
+	"runtime"
 	"syscall"
 
 	"./process"
@@ -47,6 +48,9 @@ func traceProcess(proc process.Process, attach bool) (chan *Syscall, error) {
 	}
 	ret := make(chan *Syscall)
 	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
 		var savedRegs, regs syscall.PtraceRegs
 		newSyscall := true
 	Outer:
