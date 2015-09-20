@@ -15,15 +15,11 @@ func TraceSpawn(cmd string, args ...string) (chan *Syscall, error) {
 	if err != nil {
 		return nil, err
 	}
-	var status syscall.WaitStatus
-	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
-		return nil, err
-	}
 	proc, err := process.FindPid(pid)
 	if err != nil {
 		return nil, err
 	}
-	return traceProcess(proc)
+	return traceProcess(proc, false)
 }
 
 func TracePid(pid int) (chan *Syscall, error) {
@@ -31,38 +27,47 @@ func TracePid(pid int) (chan *Syscall, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.PtraceAttach(pid); err != nil {
-		return nil, err
+	return traceProcess(proc, true)
+}
+
+func traceProcess(proc process.Process, attach bool) (chan *Syscall, error) {
+	pid := proc.Pid()
+	if attach {
+		if err := syscall.PtraceAttach(pid); err != nil {
+			return nil, err
+		}
 	}
 	var status syscall.WaitStatus
 	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
 		return nil, err
 	}
-	return traceProcess(proc)
-}
-
-func traceProcess(proc process.Process) (chan *Syscall, error) {
-	pid := proc.Pid()
-	ret := make(chan *Syscall)
-	var savedRegs, regs syscall.PtraceRegs
-	var status syscall.WaitStatus
 	// TODO: set options for following children?
 	if err := syscall.PtraceSetOptions(pid, syscall.PTRACE_O_TRACESYSGOOD); err != nil {
 		return nil, err
 	}
+	ret := make(chan *Syscall)
 	go func() {
+		var savedRegs, regs syscall.PtraceRegs
 		newSyscall := true
+	Outer:
 		for {
-			// wait for syscall entry
-			if err := syscall.PtraceSyscall(pid, 0); err != nil {
-				fmt.Println(err)
-				break
-			}
-			if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
-				break
-			}
-			if status.Exited() {
-				break
+			for {
+				// wait for syscall entry
+				if err := syscall.PtraceSyscall(pid, 0); err != nil {
+					fmt.Println("DEBUG: " + err.Error())
+					break Outer
+				}
+				if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
+					fmt.Println("DEBUG: " + err.Error())
+					break Outer
+				}
+				if status.Exited() {
+					fmt.Println("DEBUG: process exited")
+					break Outer
+				}
+				if status.StopSignal() != 0 {
+					break
+				}
 			}
 			signal := status.StopSignal()
 			switch signal {
