@@ -19,7 +19,7 @@ func main() {
 	fs.Parse(os.Args[1:])
 	args := fs.Args()
 
-	var trace chan *ghostrace.Syscall
+	var trace chan *ghostrace.Event
 	var err error
 	if pid != nil && *pid >= 0 {
 		trace, err = ghostrace.TracePid(*pid)

@@ -5,10 +5,12 @@ import (
 	"runtime"
 	"syscall"
 
+	"./memio"
 	"./process"
+	"./sys"
 )
 
-func TraceSpawn(cmd string, args ...string) (chan *Syscall, error) {
+func TraceSpawn(cmd string, args ...string) (chan *Event, error) {
 	pid, err := syscall.ForkExec(cmd, args, &syscall.ProcAttr{
 		Sys:   &syscall.SysProcAttr{Ptrace: true},
 		Files: []uintptr{0, 1, 2},
@@ -23,7 +25,7 @@ func TraceSpawn(cmd string, args ...string) (chan *Syscall, error) {
 	return traceProcess(proc, false)
 }
 
-func TracePid(pid int) (chan *Syscall, error) {
+func TracePid(pid int) (chan *Event, error) {
 	proc, err := process.FindPid(pid)
 	if err != nil {
 		return nil, err
@@ -31,7 +33,7 @@ func TracePid(pid int) (chan *Syscall, error) {
 	return traceProcess(proc, true)
 }
 
-func traceProcess(proc process.Process, attach bool) (chan *Syscall, error) {
+func traceProcess(proc process.Process, attach bool) (chan *Event, error) {
 	pid := proc.Pid()
 	if attach {
 		if err := syscall.PtraceAttach(pid); err != nil {
@@ -46,7 +48,17 @@ func traceProcess(proc process.Process, attach bool) (chan *Syscall, error) {
 	if err := syscall.PtraceSetOptions(pid, syscall.PTRACE_O_TRACESYSGOOD); err != nil {
 		return nil, err
 	}
-	ret := make(chan *Syscall)
+	var readMem = func(p []byte, addr uint64) (int, error) {
+		return syscall.PtracePeekData(pid, uintptr(addr), p)
+	}
+	var writeMem = func(p []byte, addr uint64) (int, error) {
+		return syscall.PtracePokeData(pid, uintptr(addr), p)
+	}
+	codec, err := sys.NewCodec(sys.ARCH_X86_64, sys.OS_LINUX, memio.NewMemIO(readMem, writeMem))
+	if err != nil {
+		return nil, err
+	}
+	ret := make(chan *Event)
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
@@ -84,12 +96,15 @@ func traceProcess(proc process.Process, attach bool) (chan *Syscall, error) {
 					savedRegs = regs
 				} else {
 					newSyscall = true
-					ret <- &Syscall{
-						Process: proc,
-						Num:     int(savedRegs.Orig_rax),
-						Name:    "",
-						Args:    []uint64{regs.Rdi, regs.Rsi, regs.Rdx, regs.R10, regs.R8, regs.R9},
-						Ret:     regs.Rax,
+					args := []uint64{regs.Rdi, regs.Rsi, regs.Rdx, regs.R10, regs.R8, regs.R9}
+					call, err := codec.DecodeRet(int(savedRegs.Orig_rax), args, regs.Rax)
+					if err != nil {
+						fmt.Println(err)
+					} else {
+						ret <- &Event{
+							Process: proc,
+							Syscall: call,
+						}
 					}
 				}
 				// TODO: do something with these?
