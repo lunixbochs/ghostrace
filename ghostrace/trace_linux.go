@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"syscall"
+	"time"
 
 	"./memio"
 	"./process"
@@ -44,8 +45,8 @@ func traceProcess(proc process.Process, attach bool) (chan *Event, error) {
 	if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
 		return nil, err
 	}
-	// TODO: set options for following children?
-	if err := syscall.PtraceSetOptions(pid, syscall.PTRACE_O_TRACESYSGOOD); err != nil {
+	options := syscall.PTRACE_O_TRACECLONE | syscall.PTRACE_O_TRACEFORK | syscall.PTRACE_O_TRACEVFORK | syscall.PTRACE_O_TRACESYSGOOD
+	if err := syscall.PtraceSetOptions(pid, options); err != nil {
 		return nil, err
 	}
 	var readMem = func(p []byte, addr uint64) (int, error) {
@@ -64,56 +65,73 @@ func traceProcess(proc process.Process, attach bool) (chan *Event, error) {
 		defer runtime.UnlockOSThread()
 
 		var savedRegs, regs syscall.PtraceRegs
+		var stopSig syscall.Signal
 		newSyscall := true
 	Outer:
 		for {
-			for {
-				// wait for syscall entry
-				if err := syscall.PtraceSyscall(pid, 0); err != nil {
-					fmt.Println("DEBUG: " + err.Error())
-					break Outer
-				}
-				if _, err := syscall.Wait4(pid, &status, 0, nil); err != nil {
-					fmt.Println("DEBUG: " + err.Error())
-					break Outer
-				}
-				if status.Exited() {
-					fmt.Println("DEBUG: process exited")
-					break Outer
-				}
-				if status.StopSignal() != 0 {
-					break
-				}
+			// wait for syscall entry
+			if err := syscall.PtraceSyscall(pid, int(stopSig)); err != nil {
+				fmt.Println("DEBUG: " + err.Error())
+				break
 			}
-			signal := status.StopSignal()
-			switch signal {
-			case syscall.SIGTRAP | 0x80:
-				if err := syscall.PtraceGetRegs(pid, &regs); err != nil {
-					break
+			if _, err := syscall.Wait4(pid, &status, syscall.WALL, nil); err != nil {
+				fmt.Println("DEBUG: " + err.Error())
+				break
+			}
+			if status.Exited() {
+				fmt.Println("DEBUG: process exited")
+				break
+			}
+			stopSig = status.StopSignal()
+			// are we blocking on a sigstop?
+			// TODO: send events upstream for signals
+			wasStopped := false
+			for stopSig == syscall.SIGSTOP ||
+				stopSig == syscall.SIGTTIN || stopSig == syscall.SIGTTOU || stopSig == syscall.SIGTSTP {
+				wasStopped = true
+				if err := syscall.PtraceCont(pid, int(stopSig)); err != nil {
+					fmt.Println("DEBUG: " + err.Error())
+					break Outer
 				}
-				if newSyscall {
-					newSyscall = false
-					savedRegs = regs
-				} else {
-					newSyscall = true
-					args := []uint64{regs.Rdi, regs.Rsi, regs.Rdx, regs.R10, regs.R8, regs.R9}
-					call, err := codec.DecodeRet(int(savedRegs.Orig_rax), args, regs.Rax)
-					if err != nil {
-						fmt.Println(err)
+				if _, err := syscall.Wait4(pid, &status, syscall.WALL, nil); err != nil {
+					fmt.Println("DEBUG: " + err.Error())
+					break Outer
+				}
+				stopSig = status.StopSignal()
+				time.Sleep(50 * time.Millisecond)
+			}
+			// did we get a ptrace event?
+			if !wasStopped && (stopSig&syscall.SIGTRAP) != 0 {
+				stopSig = syscall.Signal(0)
+				switch status.StopSignal() & ^syscall.SIGTRAP {
+				case 0x80: // SYSCALL
+					if err := syscall.PtraceGetRegs(pid, &regs); err != nil {
+						break
+					}
+					if newSyscall {
+						newSyscall = false
+						savedRegs = regs
 					} else {
-						ret <- &Event{
-							Process: proc,
-							Syscall: call,
+						newSyscall = true
+						args := []uint64{regs.Rdi, regs.Rsi, regs.Rdx, regs.R10, regs.R8, regs.R9}
+						call, err := codec.DecodeRet(int(savedRegs.Orig_rax), args, regs.Rax)
+						if err != nil {
+							fmt.Println(err)
+						} else {
+							ret <- &Event{
+								Process: proc,
+								Syscall: call,
+							}
 						}
 					}
+					// TODO: do something with these?
+				case syscall.PTRACE_EVENT_VFORK << 8:
+				case syscall.PTRACE_EVENT_FORK << 8:
+				case syscall.PTRACE_EVENT_CLONE << 8:
+				case syscall.PTRACE_EVENT_VFORK_DONE << 8:
+				case syscall.PTRACE_EVENT_EXEC << 8:
+				case syscall.PTRACE_EVENT_EXIT << 8:
 				}
-				// TODO: do something with these?
-			case syscall.PTRACE_EVENT_VFORK:
-			case syscall.PTRACE_EVENT_FORK:
-			case syscall.PTRACE_EVENT_CLONE:
-			case syscall.PTRACE_EVENT_VFORK_DONE:
-			case syscall.PTRACE_EVENT_EXEC:
-			case syscall.PTRACE_EVENT_EXIT:
 			}
 		}
 		close(ret)
