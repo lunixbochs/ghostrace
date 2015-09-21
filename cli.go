@@ -21,11 +21,12 @@ func main() {
 
 	var trace chan *ghostrace.Event
 	var err error
+	tracer := ghostrace.NewTracer()
 	if pid != nil && *pid >= 0 {
-		trace, err = ghostrace.TracePid(*pid)
+		trace, err = tracer.Trace(*pid)
 	} else {
 		if len(args) > 0 {
-			trace, err = ghostrace.TraceSpawn(args[0], args...)
+			trace, err = tracer.Spawn(args[0], args...)
 		} else {
 			fs.Usage()
 			os.Exit(1)

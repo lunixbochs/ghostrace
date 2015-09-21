@@ -11,7 +11,27 @@ import (
 	"./sys"
 )
 
-func TraceSpawn(cmd string, args ...string) (chan *Event, error) {
+type execCb func(proc process.Process) bool
+
+type Tracer interface {
+	ExecFilter(cb execCb)
+	Spawn(cmd string, args ...string) (chan *Event, error)
+	Trace(pid int) (chan *Event, error)
+}
+
+type LinuxTracer struct {
+	execFilter execCb
+}
+
+func NewTracer() Tracer {
+	return &LinuxTracer{}
+}
+
+func (t *LinuxTracer) ExecFilter(cb execCb) {
+	t.execFilter = cb
+}
+
+func (t *LinuxTracer) Spawn(cmd string, args ...string) (chan *Event, error) {
 	pid, err := syscall.ForkExec(cmd, args, &syscall.ProcAttr{
 		Sys:   &syscall.SysProcAttr{Ptrace: true},
 		Files: []uintptr{0, 1, 2},
@@ -23,25 +43,29 @@ func TraceSpawn(cmd string, args ...string) (chan *Event, error) {
 	if _, err := syscall.Wait4(pid, &status, syscall.WALL, nil); err != nil {
 		return nil, err
 	}
-	return traceProcess(pid, false)
+	return t.traceProcess(pid, false)
 }
 
-func TracePid(pid int) (chan *Event, error) {
-	return traceProcess(pid, true)
+func (t *LinuxTracer) Trace(pid int) (chan *Event, error) {
+	return t.traceProcess(pid, true)
 }
 
-func traceProcess(pid int, attach bool) (chan *Event, error) {
+func (t *LinuxTracer) traceProcess(pid int, attach bool) (chan *Event, error) {
 	if attach {
 		if err := syscall.PtraceAttach(pid); err != nil {
 			return nil, err
 		}
 	}
 	ret := make(chan *Event)
-	t, err := newTracer(pid, ret)
+	proc, err := process.FindPid(pid)
 	if err != nil {
 		return nil, err
 	}
-	var table = map[int]*tracer{pid: t}
+	traced, err := newTracedProc(proc, ret)
+	if err != nil {
+		return nil, err
+	}
+	var table = map[int]*tracedProc{pid: traced}
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
@@ -54,19 +78,31 @@ func traceProcess(pid int, attach bool) (chan *Event, error) {
 				fmt.Println("DEBUG:", err)
 				return
 			}
-			tracer, ok := table[pid]
+			traced, ok := table[pid]
 			if !ok {
-				// TODO: new callback
-				t, err := newTracer(pid, ret)
+				proc, err := process.FindPid(pid)
 				if err != nil {
 					fmt.Println("DEBUG:", err)
+					continue
 				}
-				table[pid] = t
+				if t.execFilter != nil && !t.execFilter(proc) {
+					syscall.PtraceDetach(pid)
+				} else {
+					// TODO: new callback
+					t, err := newTracedProc(proc, ret)
+					if err != nil {
+						fmt.Println("DEBUG:", err)
+						continue
+					}
+					table[pid] = t
+				}
 			} else {
 				if status.Exited() {
 					// process exit
 				} else {
-					tracer.Event(status)
+					if err := traced.Event(status); err != nil {
+						fmt.Println("DEBUG:", err)
+					}
 				}
 			}
 		}
@@ -74,7 +110,7 @@ func traceProcess(pid int, attach bool) (chan *Event, error) {
 	return ret, nil
 }
 
-type tracer struct {
+type tracedProc struct {
 	Process    process.Process
 	Codec      *sys.Codec
 	StopSig    syscall.Signal
@@ -83,11 +119,8 @@ type tracer struct {
 	Channel    chan *Event
 }
 
-func newTracer(pid int, ret chan *Event) (*tracer, error) {
-	proc, err := process.FindPid(pid)
-	if err != nil {
-		return nil, err
-	}
+func newTracedProc(proc process.Process, ret chan *Event) (*tracedProc, error) {
+	pid := proc.Pid()
 	options := syscall.PTRACE_O_TRACECLONE | syscall.PTRACE_O_TRACEFORK | syscall.PTRACE_O_TRACEVFORK | syscall.PTRACE_O_TRACESYSGOOD
 	if err := syscall.PtraceSetOptions(pid, options); err != nil {
 		return nil, err
@@ -105,7 +138,7 @@ func newTracer(pid int, ret chan *Event) (*tracer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tracer{
+	return &tracedProc{
 		Process:    proc,
 		Codec:      codec,
 		NewSyscall: true,
@@ -113,7 +146,7 @@ func newTracer(pid int, ret chan *Event) (*tracer, error) {
 	}, nil
 }
 
-func (t *tracer) Event(status syscall.WaitStatus) error {
+func (t *tracedProc) Event(status syscall.WaitStatus) error {
 	pid := t.Process.Pid()
 	t.StopSig = status.StopSignal()
 	// are we blocking on a sigstop?
