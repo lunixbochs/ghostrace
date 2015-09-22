@@ -117,6 +117,10 @@ func (p *DarwinProcess) Cmdline() []string {
 	return nil
 }
 
+func get(pid int) (Process, error) {
+	return getFallback(pid)
+}
+
 func List() (ProcessList, error) {
 	var count C.int
 	tmp := C.process_list(&count)

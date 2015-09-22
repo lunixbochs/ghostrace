@@ -51,6 +51,10 @@ func FindName(name string) (ProcessList, error) {
 }
 
 func FindPid(pid int) (Process, error) {
+	return get(pid)
+}
+
+func getFallback(pid int) (Process, error) {
 	list, err := Filter(func(p Process) bool {
 		return p.Pid() == pid
 	})
