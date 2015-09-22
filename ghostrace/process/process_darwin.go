@@ -3,6 +3,7 @@ package process
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"unsafe"
 )
@@ -94,6 +95,10 @@ func (p *DarwinProcess) argv() []string {
 	exe, tmp := tmpSplit[0], strings.TrimLeft(tmpSplit[1], "\x00")
 	argv := strings.SplitN(tmp, "\x00", count+1)[:count]
 	return append([]string{exe}, argv...)
+}
+
+func (p *DarwinProcess) String() string {
+	return fmt.Sprintf("<pid %d cmdline: %s", p.Pid(), strings.Join(p.Cmdline(), " "))
 }
 
 func (p *DarwinProcess) Exe() string {

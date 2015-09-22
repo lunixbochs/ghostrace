@@ -29,6 +29,7 @@ type Process interface {
 	Gid() int
 	Parent() Process
 	Children() ProcessList
+	String() string
 }
 
 type Match struct {

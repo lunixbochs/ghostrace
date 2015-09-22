@@ -31,6 +31,11 @@ func (c *Codec) DecodeRet(n int, args []uint64, ret uint64) (Syscall, error) {
 	return c.decode(n, args, ret, true)
 }
 
+func (c *Codec) GetName(n int) string {
+	name, _ := num.Linux_x86_64[n]
+	return name
+}
+
 func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, error) {
 	name, ok := num.Linux_x86_64[n]
 	if !ok {
@@ -96,6 +101,38 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 			c.Mem.ReadAt(data[pos:pos+vec.Len], vec.Base)
 		}
 		out = &call.Write{int(args[0]), data, args[1], args[2], int(int64(ret))}
+	case "execve":
+		fmt.Println("enter execve")
+		path, _ := c.Mem.ReadStrAt(args[0])
+		var readPointers = func(addr uint64) []uint64 {
+			var pointers []uint64
+			var tmp [8]byte
+			stream := c.Mem.StreamAt(addr)
+			for {
+				_, err := stream.Read(tmp[:])
+				if err != nil {
+					break
+				}
+				ptr := binary.LittleEndian.Uint64(tmp[:])
+				if ptr == 0 {
+					break
+				}
+				pointers = append(pointers, ptr)
+			}
+			return pointers
+		}
+		argvAddrs := readPointers(args[1])
+		argv := make([]string, len(argvAddrs))
+		for i, addr := range argvAddrs {
+			argv[i], _ = c.Mem.ReadStrAt(addr)
+		}
+		envpAddrs := readPointers(args[2])
+		envp := make([]string, len(envpAddrs))
+		for i, addr := range envpAddrs {
+			envp[i], _ = c.Mem.ReadStrAt(addr)
+		}
+		out = &call.Execve{path, argv, envp}
+		fmt.Printf("%+v\n", out)
 	}
 	if out == nil {
 		out = &call.Generic{n, name, args, ret}

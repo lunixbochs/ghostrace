@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"./ghostrace"
+	"./ghostrace/sys/call"
 )
 
 func main() {
@@ -36,6 +37,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error starting trace: %s\n", err)
 		os.Exit(1)
 	}
+	tracer.ExecFilter(func(c *call.Execve) bool {
+		fmt.Println("exec filter", c)
+		return true
+	})
 	for sc := range trace {
 		fmt.Fprintf(os.Stderr, "%+v\n", sc)
 	}

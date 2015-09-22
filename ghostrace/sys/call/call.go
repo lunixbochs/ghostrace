@@ -73,3 +73,13 @@ type Writev struct {
 	Data         []byte
 	Iovec, Count uint64
 }
+
+type Execve struct {
+	Path string
+	Argv []string
+	Envp []string
+}
+
+func (c *Execve) String() string {
+	return fmt.Sprintf("execve(%s, %+v, %+v)", c.Path, c.Argv, c.Envp)
+}

@@ -14,16 +14,20 @@ var numRe = regexp.MustCompile(`^\d+$`)
 
 type LinuxProcess struct {
 	process
+	exe     string
+	cmdline []string
+}
+
+func (p *LinuxProcess) String() string {
+	return fmt.Sprintf("<pid: %d cmdline: %s>", p.Pid(), strings.Join(p.Cmdline(), ", "))
 }
 
 func (p *LinuxProcess) Exe() string {
-	exe, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", p.pid))
-	return exe
+	return p.exe
 }
 
 func (p *LinuxProcess) Cmdline() []string {
-	cmdline, _ := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cmdline", p.pid))
-	return strings.Split(string(cmdline), "\x00")
+	return p.cmdline
 }
 
 func get(pid int) (Process, error) {
@@ -32,12 +36,17 @@ func get(pid int) (Process, error) {
 		return nil, err
 	}
 	stat := dir.Sys().(*syscall.Stat_t)
+	exe, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	rawcmdline, _ := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	cmdline := strings.Split(strings.TrimRight(string(rawcmdline), "\x00"), "\x00")
 	return &LinuxProcess{
-		process{
+		process: process{
 			pid: pid,
 			uid: int(stat.Uid),
 			gid: int(stat.Gid),
 		},
+		exe:     exe,
+		cmdline: cmdline,
 	}, nil
 }
 

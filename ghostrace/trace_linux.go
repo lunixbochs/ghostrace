@@ -2,6 +2,8 @@ package ghostrace
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"runtime"
 	"syscall"
 	"time"
@@ -9,9 +11,10 @@ import (
 	"./memio"
 	"./process"
 	"./sys"
+	"./sys/call"
 )
 
-type execCb func(proc process.Process) bool
+type execCb func(c *call.Execve) bool
 
 type Tracer interface {
 	ExecFilter(cb execCb)
@@ -61,7 +64,7 @@ func (t *LinuxTracer) traceProcess(pid int, attach bool) (chan *Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	traced, err := newTracedProc(proc, ret)
+	traced, err := newTracedProc(proc)
 	if err != nil {
 		return nil, err
 	}
@@ -69,9 +72,21 @@ func (t *LinuxTracer) traceProcess(pid int, attach bool) (chan *Event, error) {
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-
 		defer close(ret)
-		for {
+
+		// we need to catch interrupts so we don't leave other processes in a bad state
+		// TODO: make the interrupt catching behavior optional (but default)?
+		interrupted := false
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, os.Interrupt)
+		go func() {
+			for _ = range signalChan {
+				// TODO: send an interrupt event back over the channel?
+				// otherwise just make the other side also listen for interrupts
+				interrupted = true
+			}
+		}()
+		for !interrupted {
 			var status syscall.WaitStatus
 			pid, err := syscall.Wait4(-1, &status, syscall.WALL, nil)
 			if err != nil {
@@ -85,25 +100,43 @@ func (t *LinuxTracer) traceProcess(pid int, attach bool) (chan *Event, error) {
 					fmt.Println("DEBUG:", err)
 					continue
 				}
-				if t.execFilter != nil && !t.execFilter(proc) {
-					syscall.PtraceDetach(pid)
-				} else {
-					// TODO: new callback
-					t, err := newTracedProc(proc, ret)
-					if err != nil {
-						fmt.Println("DEBUG:", err)
-						continue
-					}
-					table[pid] = t
+				t, err := newTracedProc(proc)
+				if err != nil {
+					fmt.Println("DEBUG:", err)
+					continue
 				}
+				table[pid] = t
 			} else {
 				if status.Exited() {
 					// process exit
+					// TODO: send an event here
 				} else {
-					if err := traced.Event(status); err != nil {
+					var sc sys.Syscall
+					var err error
+					if sc, err = traced.Event(status); err != nil {
 						fmt.Println("DEBUG:", err)
 					}
+					if sc != nil {
+						ret <- &Event{
+							Process: traced.Process,
+							Syscall: sc,
+						}
+						// TODO: need to update the proc's exe/cmdline after execve
+						// maybe add a proc.Reset()?
+						if execve, ok := sc.(*call.Execve); ok {
+							if t.execFilter != nil && !t.execFilter(execve) {
+								syscall.PtraceDetach(pid)
+							}
+							delete(table, pid)
+						}
+					}
 				}
+			}
+		}
+		if interrupted {
+			for pid, _ := range table {
+				syscall.PtraceCont(pid, 0)
+				syscall.PtraceDetach(pid)
 			}
 		}
 	}()
@@ -116,10 +149,9 @@ type tracedProc struct {
 	StopSig    syscall.Signal
 	NewSyscall bool
 	SavedRegs  syscall.PtraceRegs
-	Channel    chan *Event
 }
 
-func newTracedProc(proc process.Process, ret chan *Event) (*tracedProc, error) {
+func newTracedProc(proc process.Process) (*tracedProc, error) {
 	pid := proc.Pid()
 	options := syscall.PTRACE_O_TRACECLONE | syscall.PTRACE_O_TRACEFORK | syscall.PTRACE_O_TRACEVFORK | syscall.PTRACE_O_TRACESYSGOOD
 	if err := syscall.PtraceSetOptions(pid, options); err != nil {
@@ -142,50 +174,48 @@ func newTracedProc(proc process.Process, ret chan *Event) (*tracedProc, error) {
 		Process:    proc,
 		Codec:      codec,
 		NewSyscall: true,
-		Channel:    ret,
 	}, nil
 }
 
-func (t *tracedProc) Event(status syscall.WaitStatus) error {
+func (t *tracedProc) Event(status syscall.WaitStatus) (ret sys.Syscall, err error) {
 	pid := t.Process.Pid()
 	t.StopSig = status.StopSignal()
 	// are we blocking on a sigstop?
 	// TODO: send events upstream for signals
 	for t.StopSig == syscall.SIGSTOP ||
 		t.StopSig == syscall.SIGTTIN || t.StopSig == syscall.SIGTTOU || t.StopSig == syscall.SIGTSTP {
-		if err := syscall.PtraceCont(pid, int(t.StopSig)); err != nil {
-			return err
+		if err = syscall.PtraceCont(pid, int(t.StopSig)); err != nil {
+			return
 		}
-		if _, err := syscall.Wait4(pid, &status, syscall.WALL, nil); err != nil {
-			return err
+		if _, err = syscall.Wait4(pid, &status, syscall.WALL, nil); err != nil {
+			return
 		}
 		t.StopSig = status.StopSignal()
 		time.Sleep(50 * time.Millisecond)
-		return nil
+		return
 	}
 	// did we get a ptrace event?
 	if t.StopSig&syscall.SIGTRAP != 0 {
 		t.StopSig = syscall.Signal(0)
 		// SYSCALL
 		if status.StopSignal() == syscall.SIGTRAP|0x80 {
-			var regs syscall.PtraceRegs
-			if err := syscall.PtraceGetRegs(pid, &regs); err != nil {
-				return err
-			}
 			if t.NewSyscall {
 				t.NewSyscall = false
-				t.SavedRegs = regs
+				if err = syscall.PtraceGetRegs(pid, &t.SavedRegs); err != nil {
+					return
+				}
 			} else {
 				t.NewSyscall = true
+			}
+			name := t.Codec.GetName(int(t.SavedRegs.Orig_rax))
+			if t.NewSyscall != (name == "execve") {
+				regs := &t.SavedRegs
 				args := []uint64{regs.Rdi, regs.Rsi, regs.Rdx, regs.R10, regs.R8, regs.R9}
-				call, err := t.Codec.DecodeRet(int(t.SavedRegs.Orig_rax), args, regs.Rax)
+				sc, err := t.Codec.DecodeRet(int(t.SavedRegs.Orig_rax), args, regs.Rax)
 				if err != nil {
 					fmt.Println(err)
 				} else {
-					t.Channel <- &Event{
-						Process: t.Process,
-						Syscall: call,
-					}
+					ret = sc
 				}
 			}
 		} else {
@@ -200,12 +230,12 @@ func (t *tracedProc) Event(status syscall.WaitStatus) error {
 			case syscall.PTRACE_EVENT_EXEC:
 			case syscall.PTRACE_EVENT_EXIT:
 			default:
-				fmt.Println("unknown", status.StopSignal(), status.StopSignal()&^syscall.SIGTRAP)
+				// fmt.Println("unknown", status.StopSignal(), status.StopSignal()&^syscall.SIGTRAP)
 			}
 		}
-		if err := syscall.PtraceSyscall(pid, int(t.StopSig)); err != nil {
-			return err
+		if err = syscall.PtraceSyscall(pid, int(t.StopSig)); err != nil {
+			return
 		}
 	}
-	return nil
+	return
 }
