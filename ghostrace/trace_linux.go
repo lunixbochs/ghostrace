@@ -79,6 +79,7 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 				return
 			}
 		}
+		topPid := pid
 		errChan <- nil
 
 		first := true
@@ -93,6 +94,8 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 				// TODO: send an interrupt event back over the channel?
 				// otherwise just make the other side also listen for interrupts
 				interrupted = sig.(syscall.Signal)
+				// interrupt the main loop's Wait4
+				syscall.Kill(topPid, syscall.SIGSTOP)
 			}
 		}()
 		for interrupted == 0 {
