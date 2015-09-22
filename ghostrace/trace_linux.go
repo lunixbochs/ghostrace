@@ -93,6 +93,7 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 				fmt.Println("DEBUG:", err)
 				break
 			}
+			sig := status.StopSignal()
 			traced, ok := table[pid]
 			if status.Exited() && ok {
 				// process exit
@@ -100,17 +101,14 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 				delete(table, pid)
 				continue
 			}
-			if !status.Stopped() {
-				continue
-			}
-			sig := status.StopSignal()
+			// check for new pid
 			if !ok {
 				proc, err := process.FindPid(pid)
 				if err != nil {
 					fmt.Println("DEBUG:", err)
 					continue
 				}
-				t, err := newTracedProc(proc, first && !spawned)
+				t, err := newTracedProc(proc, !first || !spawned)
 				if err != nil {
 					fmt.Println("DEBUG:", err)
 					continue
@@ -120,17 +118,17 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 				table[pid] = t
 			}
 			if status.TrapCause() != -1 {
-				// PTRACE_EVENT_*
+				// handle PTRACE_EVENT_*
 				sig = syscall.Signal(0)
 			} else if sig == syscall.SIGSTOP && traced.EatOneSigstop {
-				// look for a SIGSTOP
+				// handle first SIGSTOP
 				traced.EatOneSigstop = false
 				sig = syscall.Signal(0)
-			} else if interrupted != 0 {
+			} else if sig != syscall.SIGTRAP|0x80 && interrupted != 0 {
+				// we can interrupt if it's NOT a syscall delivery
 				break
-			}
-			if sig == syscall.SIGTRAP|0x80 {
-				// handle a syscall
+			} else if sig == syscall.SIGTRAP|0x80 {
+				// handle a syscall delivery
 				var sc sys.Syscall
 				var err error
 				if sc, err = traced.Syscall(); err != nil {
@@ -146,7 +144,8 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 					// maybe add a proc.Reset()?
 					if execve, ok := sc.(*call.Execve); ok {
 						if t.execFilter != nil && !t.execFilter(execve) {
-							syscall.PtraceDetach(pid)
+							traced.Detach()
+							delete(table, pid)
 						}
 					}
 				}
@@ -154,8 +153,8 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 			}
 			// TODO: send events upstream for signals
 
-			// continue and pass signal
-			if err = syscall.PtraceSyscall(pid, int(sig)); err != nil {
+			// continue and pass signal (which might be zero from earlier code)
+			if err = syscall.PtraceSyscall(pid, int(sig)); err != nil && err != syscall.ESRCH {
 				break
 			}
 		}
@@ -168,44 +167,8 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 			syscall.Kill(pid, exitSig)
 		}
 		if interrupted != 0 {
-			for pid, traced := range table {
-				// if we're expecting a SIGSTOP, skip this and wait for it
-				// otherwise the child will be detached into a an immediate SIGSTOP which is awkward for everyone
-				if !traced.EatOneSigstop {
-					if err := syscall.PtraceDetach(pid); err == nil || err != syscall.ESRCH {
-						continue
-					}
-					if err := syscall.Kill(pid, 0); err != nil && err != syscall.ESRCH {
-						continue
-					}
-					if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil && err != syscall.ESRCH {
-						continue
-					}
-				}
-				for {
-					var status syscall.WaitStatus
-					if _, err := syscall.Wait4(pid, &status, syscall.WALL, nil); err != nil {
-						if err == syscall.EINTR {
-							continue
-						}
-						break
-					}
-					if !status.Stopped() {
-						break
-					}
-					// Linux wants a SIGSTOP before you detach from a process
-					sig := status.StopSignal()
-					if sig == syscall.SIGSTOP {
-						syscall.PtraceDetach(pid)
-						break
-					}
-					if sig&syscall.SIGTRAP != 0 {
-						sig = syscall.Signal(0)
-					}
-					if err := syscall.PtraceCont(pid, int(sig)); err != nil && err != syscall.ESRCH {
-						break
-					}
-				}
+			for _, traced := range table {
+				traced.Detach()
 			}
 		}
 	}()
@@ -273,4 +236,46 @@ func (t *tracedProc) Syscall() (ret sys.Syscall, err error) {
 		}
 	}
 	return
+}
+
+func (t *tracedProc) Detach() error {
+	pid := t.Process.Pid()
+	// if we're expecting a SIGSTOP, skip this and wait for it
+	// otherwise the child will be detached into a an immediate SIGSTOP which is awkward for everyone
+	if !t.EatOneSigstop {
+		if err := syscall.PtraceDetach(pid); err == nil || err != nil && err != syscall.ESRCH {
+			return err
+		}
+		if err := syscall.Kill(pid, 0); err != nil && err != syscall.ESRCH {
+			return err
+		}
+		if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil && err != syscall.ESRCH {
+			return err
+		}
+	}
+	for {
+		var status syscall.WaitStatus
+		if _, err := syscall.Wait4(pid, &status, syscall.WALL, nil); err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			return err
+		}
+		if !status.Stopped() {
+			break
+		}
+		// Linux wants a SIGSTOP before you detach from a process
+		sig := status.StopSignal()
+		if sig == syscall.SIGSTOP {
+			syscall.PtraceDetach(pid)
+			break
+		}
+		if sig&syscall.SIGTRAP != 0 {
+			sig = syscall.Signal(0)
+		}
+		if err := syscall.PtraceCont(pid, int(sig)); err != nil && err != syscall.ESRCH {
+			return err
+		}
+	}
+	return nil
 }
