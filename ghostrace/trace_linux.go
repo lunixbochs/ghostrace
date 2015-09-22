@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	"./memio"
 	"./process"
@@ -14,6 +15,10 @@ import (
 )
 
 type execCb func(c *call.Execve) bool
+
+func isStopSig(sig syscall.Signal) bool {
+	return sig == syscall.SIGSTOP || sig == syscall.SIGTSTP || sig == syscall.SIGTTIN || sig == syscall.SIGTTOU
+}
 
 type Tracer interface {
 	ExecFilter(cb execCb)
@@ -52,6 +57,15 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 	ret := make(chan *Event)
 	errChan := make(chan error)
 	go func() {
+		// rate limit the sigstop loop hack
+		stopToken := make(chan int, 10)
+		go func() {
+			for {
+				stopToken <- 1
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		defer close(ret)
@@ -95,14 +109,33 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 			}
 			sig := status.StopSignal()
 			traced, ok := table[pid]
-			if status.Exited() && ok {
-				// process exit
-				// TODO: send an event into channel here
-				delete(table, pid)
-				continue
-			}
-			// check for new pid
-			if !ok {
+			if ok {
+				if !traced.EatOneSigstop && isStopSig(sig) {
+					// TODO: need to be smarter about rate limiting this
+					<-stopToken
+					traced.StopSig = sig
+					if err = syscall.PtraceSyscall(pid, int(sig)); err != nil && err != syscall.ESRCH {
+						break
+					}
+					continue
+				} else if traced.StopSig != 0 {
+					if sig == syscall.SIGCONT {
+						traced.StopSig = 0
+					} else if sig != 0 {
+						if err = syscall.PtraceSyscall(pid, int(traced.StopSig)); err != nil && err != syscall.ESRCH {
+							break
+						}
+						continue
+					}
+				}
+				if status.Exited() {
+					// process exit
+					// TODO: send an event into channel here
+					delete(table, pid)
+					continue
+				}
+			} else {
+				// set up new pid
 				proc, err := process.FindPid(pid)
 				if err != nil {
 					fmt.Println("DEBUG:", err)
