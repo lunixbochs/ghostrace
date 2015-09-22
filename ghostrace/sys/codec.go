@@ -102,7 +102,6 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 		}
 		out = &call.Write{int(args[0]), data, args[1], args[2], int(int64(ret))}
 	case "execve":
-		fmt.Println("enter execve")
 		path, _ := c.Mem.ReadStrAt(args[0])
 		var readPointers = func(addr uint64) []uint64 {
 			var pointers []uint64
@@ -132,7 +131,6 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 			envp[i], _ = c.Mem.ReadStrAt(addr)
 		}
 		out = &call.Execve{path, argv, envp}
-		fmt.Printf("%+v\n", out)
 	}
 	if out == nil {
 		out = &call.Generic{n, name, args, ret}

@@ -38,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 	tracer.ExecFilter(func(c *call.Execve) bool {
-		fmt.Println("exec filter", c)
+		// fmt.Println("exec filter", c)
 		return true
 	})
 	for sc := range trace {
