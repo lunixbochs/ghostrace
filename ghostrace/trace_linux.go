@@ -14,7 +14,7 @@ import (
 	"./sys/call"
 )
 
-type execCb func(c *call.Execve) bool
+type execCb func(e *Event) (bool, bool)
 
 func isStopSig(sig syscall.Signal) bool {
 	return sig == syscall.SIGSTOP || sig == syscall.SIGTSTP || sig == syscall.SIGTTIN || sig == syscall.SIGTTOU
@@ -178,8 +178,22 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 					}
 					// TODO: need to update the proc's exe/cmdline after execve
 					// maybe add a proc.Reset()?
-					if execve, ok := sc.(*call.Execve); ok {
-						if t.execFilter != nil && !t.execFilter(execve) {
+					if _, ok := sc.(*call.Execve); ok && t.execFilter != nil {
+						keepParent, followChild := t.execFilter(&Event{
+							Process: traced.Process,
+							Syscall: sc,
+						})
+						if !keepParent {
+							parent := traced.Process.Parent()
+							if parent != nil {
+								pid := parent.Pid()
+								if tracedParent, ok := table[pid]; ok {
+									tracedParent.Detach()
+									delete(table, pid)
+								}
+							}
+						}
+						if !followChild {
 							traced.Detach()
 							delete(table, pid)
 						}

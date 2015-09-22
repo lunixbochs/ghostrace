@@ -37,9 +37,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error starting trace: %s\n", err)
 		os.Exit(1)
 	}
-	tracer.ExecFilter(func(c *call.Execve) bool {
+	tracer.ExecFilter(func(c *call.Execve) (bool, bool) {
 		// fmt.Println("exec filter", c)
-		return true
+		return true, true
 	})
 	for sc := range trace {
 		fmt.Fprintf(os.Stderr, "%+v\n", sc)
