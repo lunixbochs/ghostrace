@@ -133,7 +133,10 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 				}
 				if status.Exited() {
 					// process exit
-					// TODO: send an event into channel here
+					ret <- &Event{
+						Process: traced.Process,
+						Exit:    true,
+					}
 					delete(table, pid)
 					continue
 				}
