@@ -1,4 +1,4 @@
-package ghostrace
+package ghost
 
 import (
 	"fmt"

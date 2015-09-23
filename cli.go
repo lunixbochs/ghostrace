@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"./ghostrace"
-	"./ghostrace/sys/call"
+	"./ghost"
+	"./ghost/sys/call"
 )
 
 func main() {
@@ -20,9 +20,9 @@ func main() {
 	fs.Parse(os.Args[1:])
 	args := fs.Args()
 
-	var trace chan *ghostrace.Event
+	var trace chan *ghost.Event
 	var err error
-	tracer := ghostrace.NewTracer()
+	tracer := ghost.NewTracer()
 	if pid != nil && *pid >= 0 {
 		trace, err = tracer.Trace(*pid)
 	} else {
