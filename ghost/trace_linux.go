@@ -98,6 +98,23 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 				syscall.Kill(topPid, syscall.SIGSTOP)
 			}
 		}()
+		var cleanup = func(exitSig syscall.Signal) {
+			if spawnChild >= 0 {
+				syscall.Kill(pid, syscall.SIGCONT)
+				syscall.Kill(pid, exitSig)
+			}
+			if interrupted != 0 {
+				for _, traced := range table {
+					traced.Detach()
+				}
+			}
+		}
+		defer func() {
+			if recover() != nil {
+				interrupted = syscall.SIGSEGV
+				cleanup(syscall.SIGTERM)
+			}
+		}()
 		for interrupted == 0 {
 			var status syscall.WaitStatus
 			pid, err := syscall.Wait4(-1, &status, syscall.WALL, nil)
@@ -215,15 +232,7 @@ func (t *LinuxTracer) traceProcess(pid int, spawned bool) (chan *Event, error) {
 		if exitSig == 0 {
 			exitSig = syscall.SIGTERM
 		}
-		if spawnChild >= 0 {
-			syscall.Kill(pid, syscall.SIGCONT)
-			syscall.Kill(pid, exitSig)
-		}
-		if interrupted != 0 {
-			for _, traced := range table {
-				traced.Detach()
-			}
-		}
+		cleanup(exitSig)
 	}()
 	err := <-errChan
 	if err != nil {
