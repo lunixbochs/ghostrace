@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"./ghost"
-	"./ghost/sys/call"
+	"github.com/lunixbochs/ghostrace/ghost"
+	"github.com/lunixbochs/ghostrace/ghost/sys/call"
 )
 
 func main() {

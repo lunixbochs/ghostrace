@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"../memio"
-	"./call"
-	"./num"
+	"github.com/lunixbochs/ghostrace/ghost/memio"
+	"github.com/lunixbochs/ghostrace/ghost/sys/call"
+	"github.com/lunixbochs/ghostrace/ghost/sys/num"
 )
 
 type Codec struct {

@@ -8,7 +8,7 @@ CONFIG = [
     ('linux_x86.h',    'Linux_x86',    'linux_x86_sys.go'),
     ('linux_x86_64.h', 'Linux_x86_64', 'linux_x86_64_sys.go'),
 ]
-TARGET = '../ghostrace/sys/num/'
+TARGET = '../ghost/sys/num/'
 SRC = 'syscalls'
 
 FILE_TEMPLATE = '''

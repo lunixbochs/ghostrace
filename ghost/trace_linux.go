@@ -8,10 +8,10 @@ import (
 	"syscall"
 	"time"
 
-	"./memio"
-	"./process"
-	"./sys"
-	"./sys/call"
+	"github.com/lunixbochs/ghostrace/ghost/memio"
+	"github.com/lunixbochs/ghostrace/ghost/process"
+	"github.com/lunixbochs/ghostrace/ghost/sys"
+	"github.com/lunixbochs/ghostrace/ghost/sys/call"
 )
 
 type execCb func(e *Event) (bool, bool)

@@ -3,8 +3,8 @@ package ghost
 import (
 	"fmt"
 
-	"./process"
-	"./sys"
+	"github.com/lunixbochs/ghostrace/ghost/process"
+	"github.com/lunixbochs/ghostrace/ghost/sys"
 )
 
 type Event struct {
