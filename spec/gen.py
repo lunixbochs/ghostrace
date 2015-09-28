@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 import os
 import re
 
@@ -21,14 +23,16 @@ var %(cls)s = map[int]string{
 
 LINE_TEMPLATE = '%(num)s "%(name)s",'
 
-define_re = re.compile(r'^#define\s+(?P<name>\w+)\s*\(?\s*(?P<value>\d+)\s*\)?$')
-sys_re = re.compile(r'^#define\s+(SYS|__NR)_(?P<name>[a-z0-9_]+)\s*(?P<value>\(\s*[\w\+\s]+\s*\)|\d+)$')
+value_subre = r'(?P<value>\(\s*[\w\+\s]+\s*\)|\d+)'
+define_re = re.compile(r'^#define\s+(?P<name>\w+)\s*\(?\s*%s?$' % value_subre)
+sys_re = re.compile(r'^#define\s+(SYS|_[^ ]*_NR)_(?P<name>[a-z0-9_]+)\s*%s$' % value_subre)
 
 base = os.path.dirname(__file__)
 if base:
     os.chdir(base)
 
-os.makedirs(TARGET)
+if not os.path.exists(TARGET):
+    os.makedirs(TARGET)
 
 for header, cls, target in CONFIG:
     header = os.path.join(SRC, header)
@@ -49,7 +53,11 @@ for header, cls, target in CONFIG:
             else:
                 match = define_re.match(line)
                 if match:
-                    defines[match.group('name')] = match.group('value')
+                    name, value = match.group('name'), match.group('value')
+                    if name and value:
+                        for k, v in defines.items():
+                            value = value.replace(k, v)
+                        defines[name] = str(eval(value))
 
     num_len = max(len(str(num)) for name, num in syscalls) + 1
     lines = []
