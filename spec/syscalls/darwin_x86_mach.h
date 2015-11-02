@@ -7,7 +7,6 @@
 #define DARWIN_10_9 109
 #define DARWIN_10_10 110
 #define DARWIN_VERS 110
-#define VGA_amd64
 
 /*--------------------------------------------------------------------*/
 /*--- System call numbers for Darwin.          vki-scnums-darwin.h ---*/
