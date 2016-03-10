@@ -14,6 +14,10 @@ type Generic struct {
 	Ret  uint64
 }
 
+func (c *Generic) Base() *Generic {
+	return c
+}
+
 func (c *Generic) String() string {
 	strArgs := make([]string, len(c.Args))
 	for i, v := range c.Args {
@@ -24,6 +28,7 @@ func (c *Generic) String() string {
 }
 
 type Open struct {
+	Generic
 	Path        string
 	Mode, Flags int
 	Fd          int
@@ -34,6 +39,7 @@ func (c *Open) String() string {
 }
 
 type Close struct {
+	Generic
 	Fd int
 }
 
@@ -42,6 +48,7 @@ func (c *Close) String() string {
 }
 
 type Read struct {
+	Generic
 	Fd        int
 	Data      []byte
 	Buf, Size uint64
@@ -53,6 +60,7 @@ func (c *Read) String() string {
 }
 
 type Write struct {
+	Generic
 	Fd        int
 	Data      []byte
 	Buf, Size uint64
@@ -64,17 +72,20 @@ func (c *Write) String() string {
 }
 
 type Readv struct {
+	Generic
 	Fd           int
 	Iovec, Count uint64
 }
 
 type Writev struct {
+	Generic
 	Fd           int
 	Data         []byte
 	Iovec, Count uint64
 }
 
 type Execve struct {
+	Generic
 	Path string
 	Argv []string
 	Envp []string

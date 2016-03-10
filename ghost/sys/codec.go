@@ -44,7 +44,8 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 	if !done {
 		return nil, errors.New("decoding unfinished syscalls is unimplemented")
 	}
-	var out Syscall
+	base := call.Generic{n, name, args, ret}
+	var out Syscall = &base
 	var err error
 	switch name {
 	case "open":
@@ -52,9 +53,9 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 		if err != nil {
 			return nil, err
 		}
-		out = &call.Open{path, int(args[1]), int(args[2]), int(ret)}
+		out = &call.Open{base, path, int(args[1]), int(args[2]), int(ret)}
 	case "close":
-		out = &call.Close{int(args[0])}
+		out = &call.Close{base, int(args[0])}
 	case "read":
 		length := int(int64(ret))
 		var data []byte
@@ -62,7 +63,7 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 			data = make([]byte, ret)
 			_, err = c.Mem.ReadAt(data, args[1])
 		}
-		out = &call.Read{int(args[0]), data, args[1], args[2], length}
+		out = &call.Read{base, int(args[0]), data, args[1], args[2], length}
 	case "readv":
 		length := int(int64(ret))
 		var data []byte
@@ -82,11 +83,11 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 				}
 			}
 		}
-		out = &call.Read{int(args[0]), data, args[1], args[2], length}
+		out = &call.Read{base, int(args[0]), data, args[1], args[2], length}
 	case "write":
 		data := make([]byte, args[2])
 		_, err = c.Mem.ReadAt(data, args[1])
-		out = &call.Write{int(args[0]), data, args[1], args[2], int(int64(ret))}
+		out = &call.Write{base, int(args[0]), data, args[1], args[2], int(int64(ret))}
 	case "writev":
 		mem := c.Mem.StreamAt(args[1])
 		vecs := iovecRead(mem, args[2], 64, binary.LittleEndian)
@@ -100,7 +101,7 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 			data = data[:pos+vec.Len]
 			c.Mem.ReadAt(data[pos:pos+vec.Len], vec.Base)
 		}
-		out = &call.Write{int(args[0]), data, args[1], args[2], int(int64(ret))}
+		out = &call.Write{base, int(args[0]), data, args[1], args[2], int(int64(ret))}
 	case "execve":
 		path, _ := c.Mem.ReadStrAt(args[0])
 		var readPointers = func(addr uint64) []uint64 {
@@ -130,10 +131,7 @@ func (c *Codec) decode(n int, args []uint64, ret uint64, done bool) (Syscall, er
 		for i, addr := range envpAddrs {
 			envp[i], _ = c.Mem.ReadStrAt(addr)
 		}
-		out = &call.Execve{path, argv, envp}
-	}
-	if out == nil {
-		out = &call.Generic{n, name, args, ret}
+		out = &call.Execve{base, path, argv, envp}
 	}
 	return out, err
 }
