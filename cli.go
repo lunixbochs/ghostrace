@@ -6,12 +6,11 @@ import (
 	"os"
 
 	"github.com/lunixbochs/ghostrace/ghost"
-	"github.com/lunixbochs/ghostrace/ghost/sys/call"
 )
 
 func main() {
 	fs := flag.NewFlagSet("ghostrace", flag.ExitOnError)
-	// follow := fs.Bool("f", false, "follow subprocesses")
+	follow := fs.Bool("f", false, "follow subprocesses")
 	pid := fs.Int("p", -1, "attach to pid")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] -p <pid> | <exe> [args...]\n", os.Args[0])
@@ -37,9 +36,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error starting trace: %s\n", err)
 		os.Exit(1)
 	}
-	tracer.ExecFilter(func(c *call.Execve) (bool, bool) {
+	tracer.ExecFilter(func(c *ghost.Event) (bool, bool) {
 		// fmt.Println("exec filter", c)
-		return true, true
+		// keepParent, followChild
+		return true, *follow
 	})
 	for sc := range trace {
 		fmt.Fprintf(os.Stderr, "%+v\n", sc)
