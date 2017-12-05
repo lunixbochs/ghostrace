@@ -70,6 +70,7 @@ if __name__ == '__main__':
         num_len = max(len(str(num)) for name, num in syscalls) + 1
         lines = []
         for name, num in syscalls:
+            if name == 'syscalls': continue
             num = (str(num) + ':').ljust(num_len)
             lines.append(LINE_TEMPLATE % {'name': name, 'num': num})
 

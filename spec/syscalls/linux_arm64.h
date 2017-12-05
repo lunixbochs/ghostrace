@@ -236,15 +236,9 @@ __SYSCALL(__NR_sync, sys_sync)
 __SYSCALL(__NR_fsync, sys_fsync)
 #define __NR_fdatasync 83
 __SYSCALL(__NR_fdatasync, sys_fdatasync)
-#ifdef __ARCH_WANT_SYNC_FILE_RANGE2
-#define __NR_sync_file_range2 84
-__SC_COMP(__NR_sync_file_range2, sys_sync_file_range2, \
-	  compat_sys_sync_file_range2)
-#else
 #define __NR_sync_file_range 84
 __SC_COMP(__NR_sync_file_range, sys_sync_file_range, \
 	  compat_sys_sync_file_range)
-#endif
 
 /* fs/timerfd.c */
 #define __NR_timerfd_create 85
