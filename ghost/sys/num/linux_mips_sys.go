@@ -138,6 +138,7 @@ var Linux_mips = map[int]string{
 	4134: "bdflush",
 	4135: "sysfs",
 	4136: "personality",
+	4137: "afs_syscall",
 	4138: "setfsuid",
 	4139: "setfsgid",
 	4140: "_llseek",

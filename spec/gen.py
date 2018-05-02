@@ -27,6 +27,7 @@ LINE_TEMPLATE = '%(num)s "%(name)s",'
 value_subre = r'(?P<value>\(\s*[\w\+\s]+\s*\)|\d+|0x[\da-f]+)'
 define_re = re.compile(r'^#define\s+(?P<name>\w+)\s*\(?\s*%s?$' % value_subre)
 sys_re = re.compile(r'^#define\s+(SYS|_[^ ]*_NR(3264)?)_(?P<name>[a-z0-9_]+)\s*%s$' % value_subre)
+comment_re = re.compile(r'//|/\*.+\*/')
 
 if __name__ == '__main__':
     base = os.path.dirname(__file__)
@@ -44,7 +45,7 @@ if __name__ == '__main__':
         defines = {}
         with open(header) as f:
             for lineno, line in enumerate(f):
-                line = line.strip()
+                line = comment_re.sub('', line).strip()
                 try:
                     match = sys_re.match(line)
                     if match:
